@@ -1,0 +1,54 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+  
+    // Function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Function to check if user owns the document
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+
+    match /posts/{postId} {
+      allow read: if isAuthenticated();
+      
+      allow create: if isAuthenticated() 
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.contenido.size() > 0;
+      
+      allow update: if isAuthenticated() && (
+        // Case 1: Owner updates everything (except transferring ownership)
+        (isOwner(resource.data.userId) && request.resource.data.userId == resource.data.userId) ||
+        // Case 2: Others update ONLY likes, comments, shares, or poll votes
+        (request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['likes', 'comments', 'shares', 'poll']))
+      );
+        
+      allow delete: if isAuthenticated() && isOwner(resource.data.userId);
+
+      // Comments sub-collection
+      match /comments/{commentId} {
+        allow read: if isAuthenticated();
+        // Anyone can create a comment if they are authenticated and use their own UID
+        allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+        // Only owner can edit/delete their comment
+        allow update, delete: if isAuthenticated() && isOwner(resource.data.userId);
+      }
+    }
+    
+    // Allow collectionGroup queries for comments (used in Replies tab)
+    match /{path=**}/comments/{commentId} {
+      allow read: if isAuthenticated();
+    }
+
+    match /usuarios/{userId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isOwner(userId);
+    }
+  }
+}
+
